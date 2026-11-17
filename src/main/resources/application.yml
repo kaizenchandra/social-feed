@@ -1,0 +1,59 @@
+spring:
+  application.name: social-feed
+  task.scheduling.pool.size: 4
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/feed}
+    username: ${DB_USER:feed}
+    password: ${DB_PASSWORD:feed}
+    hikari:
+      maximum-pool-size: 20
+      connection-timeout: 2000
+      data-source-properties:
+        socketTimeout: 5
+        options: -c statement_timeout=3000 -c lock_timeout=2000
+  data.redis:
+    host: ${REDIS_HOST:localhost}
+    timeout: 200ms
+    connect-timeout: 200ms
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        delivery.timeout.ms: 5000
+        request.timeout.ms: 2000
+        max.block.ms: 2000
+        enable.idempotence: true
+    consumer:
+      group-id: feed-v1
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      max-poll-records: 50
+    listener.ack-mode: record
+  mvc.problemdetails.enabled: true
+server:
+  shutdown: graceful
+  tomcat.threads.max: 100
+  tomcat.max-connections: 2000
+  tomcat.accept-count: 100
+  max-http-request-header-size: 16KB
+management:
+  endpoints.web.exposure.include: health,prometheus
+  endpoint.health.probes.enabled: true
+  tracing.sampling.probability: 0.1
+feed:
+  jwt-secret: ${JWT_SECRET:}
+  auth:
+    mode: ${AUTH_MODE:development}
+    issuer: ${OIDC_ISSUER:}
+    jwk-set-uri: ${OIDC_JWK_SET_URI:}
+    audience: ${OIDC_AUDIENCE:social-feed-api}
+  celebrity-threshold: ${CELEBRITY_THRESHOLD:10000}
+  workers-enabled: ${WORKERS_ENABLED:true}
+  s3-endpoint: ${S3_ENDPOINT:http://localhost:9000}
+  s3-bucket: ${S3_BUCKET:feed}
+  s3-access: ${S3_ACCESS:minioadmin}
+  s3-secret: ${S3_SECRET:minioadmin}

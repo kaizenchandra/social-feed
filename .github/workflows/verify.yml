@@ -1,0 +1,14 @@
+name: social-feed
+on: [ push, pull_request ]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21', cache: maven }
+      - run: mvn -B -f social-feed/pom.xml -Pintegration verify
+      - run: docker build -t social-feed:ci social-feed
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: test-reports, path: social-feed/target/surefire-reports }

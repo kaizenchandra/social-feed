@@ -1,0 +1,18 @@
+groups:
+  - name: feed
+    rules:
+      - alert: FeedHighErrorRate
+        expr: sum(rate(http_server_requests_seconds_count{status=~"5.."}[5m])) / clamp_min(sum(rate(http_server_requests_seconds_count[5m])),1) > 0.001
+        for: 5m
+        labels: { severity: page }
+        annotations: { summary: Feed API errors exceed budget }
+      - alert: OutboxBacklog
+        expr: feed_outbox_backlog > 10000
+        for: 5m
+        labels: { severity: page }
+        annotations: { summary: Check broker health and dead outbox events }
+      - alert: OutboxDeadEvents
+        expr: feed_outbox_dead > 0
+        for: 2m
+        labels: { severity: page }
+        annotations: { summary: Outbox retry budget exhausted; investigate before requeueing }

@@ -1,0 +1,52 @@
+# Supply feed-secrets through your external secret manager before applying.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: social-feed }
+spec:
+  replicas: 3
+  selector: { matchLabels: { app: social-feed } }
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
+  template:
+    metadata: { labels: { app: social-feed } }
+    spec:
+      terminationGracePeriodSeconds: 60
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001 }
+      containers:
+        - name: app
+          image: social-feed:1.0.0
+          ports: [ { containerPort: 8080 } ]
+          env:
+            - { name: SPRING_PROFILES_ACTIVE, value: production }
+          envFrom: [ { secretRef: { name: feed-secrets } } ]
+          resources:
+            requests: { cpu: 500m, memory: 768Mi }
+            limits: { cpu: '2', memory: 1536Mi }
+          startupProbe: { httpGet: { path: /actuator/health/liveness, port: 8080 }, failureThreshold: 30, periodSeconds: 5 }
+          readinessProbe: { httpGet: { path: /actuator/health/readiness, port: 8080 }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /actuator/health/liveness, port: 8080 }, periodSeconds: 10 }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ ALL ] } }
+          volumeMounts: [ { name: tmp, mountPath: /tmp } ]
+      volumes: [ { name: tmp, emptyDir: { sizeLimit: 256Mi } } ]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: social-feed }
+spec:
+  selector: { app: social-feed }
+  ports: [ { port: 80, targetPort: 8080 } ]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: social-feed }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: social-feed }
+  minReplicas: 3
+  maxReplicas: 30
+  metrics: [ { type: Resource, resource: { name: cpu, target: { type: Utilization, averageUtilization: 65 } } } ]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: social-feed }
+spec:
+  minAvailable: 2
+  selector: { matchLabels: { app: social-feed } }

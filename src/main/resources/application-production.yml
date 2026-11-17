@@ -1,0 +1,5 @@
+# Production never uses the development HMAC issuer. The decoder also rejects a
+# development mode override while this profile is active.
+feed:
+  auth:
+    mode: oidc

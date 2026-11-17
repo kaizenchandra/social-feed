@@ -1,0 +1,64 @@
+# Failure analysis
+
+Each row gives mechanism/risk, prevention/recovery, verification and residual risk. “Proposed” means not executed.
+
+| Scenario                       | Mechanism / user impact                                       | Prevention / recovery                                                                                  | Verification                                                                                      | Residual risk                                                   |
+|--------------------------------|---------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------|-----------------------------------------------------------------|
+| Lost publication response      | Commit may succeed despite HTTP timeout; duplicate retry risk | Retry same actor/key; identical body returns original post; retain keys                                | Idempotent creation integration                                                                   | Keys currently retained indefinitely                            |
+| Kafka publish fails            | Post committed; freshness lag                                 | Atomic outbox + bounded backoff; restore broker/requeue dead event                                     | Broker success, injected outage, lease crash/takeover/fencing and concurrent-claim tests executed | Truth fallback preserves reads; outbox may need operator action |
+| Duplicate Kafka event          | Repeated delivery could duplicate timelines                   | Unique job/post and viewer/post; consume same event twice                                              | Executed duplicate test                                                                           | External analytics consumers need their own dedupe              |
+| Worker crashes mid-batch       | Partial delivery/checkpoint risk                              | Entries and checkpoint one transaction; restart job                                                    | Executed forced rollback and 501 follower resume                                                  | Long DB outage delays recovery                                  |
+| Celebrity overload             | 100M recipient inserts starve ordinary jobs                   | PULL threshold frozen per post; inspect job backlog                                                    | Threshold integration plus capacity estimate                                                      | Static threshold misses high frequency creators                 |
+| Stale cache                    | Old post IDs after edits                                      | IDs only; current truth hydration                                                                      | Block after cached pagination executed                                                            | In-flight pre-revocation response may complete                  |
+| Redis unavailable              | Cache and quota failures                                      | GET DB fallback; mutations503; restore quota store                                                     | Injected Redis GET outage executed                                                                | DB overload possible under cache loss                           |
+| PostgreSQL primary fails       | Requests cannot authorize safely                              | Fail closed; fenced managed failover, retry idempotent writes                                          | Failover drill proposed                                                                           | RTO/RPO unmeasured                                              |
+| Kafka lag grows                | Delayed feed materialization                                  | Alert on lag/backlog, repair broker and scale workers within DB budget                                 | Lag load test proposed                                                                            | Truth fallback costly                                           |
+| Unfollow during fan-out        | Stale derived entries                                         | Hydration requires current follows; no need immediate delete                                           | Privacy pagination exercised; exact interleaving proposed                                         | May finish response authorized before unfollow commit           |
+| Block while cached             | Exposure from old IDs                                         | Bidirectional SQL block check every read                                                               | Executed block/session test                                                                       | Signed media capabilities valid30s                              |
+| Post deletion after fan-out    | Deleted source ID persists                                    | State predicate hides tombstone; later cleanup derived rows                                            | Executed deletion test                                                                            | Hard erasure/purge policy pending                               |
+| Privacy transition             | Public posts must become private                              | Hydration joins current user privacy/follows                                                           | Approval and public-to-private old-session filtering executed                                     | Remote replication requires authority fencing                   |
+| 100K followed accounts         | Expensive graph fan-in                                        | Set-based join,1000 output cap,SQL timeout; future sharded index                                       | Large-graph benchmark proposed                                                                    | LIMIT does not bound scan work                                  |
+| Identical timestamps           | Unstable sort loses/duplicates entries                        | Timestamp+UUID tie and immutable positions                                                             | Equal timestamp pagination and cursor expiry executed; mass scale proposed                        | Snapshot only newest1000 candidates                             |
+| Posts arrive during pagination | Page reshuffle                                                | Stable session excludes new posts until refresh                                                        | Executed ranked insert-between-pages                                                              | New eligibility waits for next session                          |
+| Out-of-order engagement        | Stale delta could corrupt counters                            | No event-driven counters; unique source likes count                                                    | Duplicate-like concurrency executed                                                               | Hot post row serializes mutations                               |
+| Counter drift                  | Lost increments/duplicate deltas                              | Compute counts from truth; reconcile before adopting async counters                                    | Executed like idempotency                                                                         | COUNT overhead at viral scale                                   |
+| Media uploaded but post fails  | Orphan object/storage bill                                    | Completed upload can attach on retry; DB-aware sweeper required                                        | Ownership/completion executed; orphan cleanup proposed                                            | Sweeper not implemented                                         |
+| Viral hot key                  | Cache/like contention                                         | Candidate cache per session; capped ranking; future sharded counters                                   | Viral load test proposed                                                                          | Current post lock and counts bottleneck                         |
+| Regional outage                | Stale permission replica/promotion split brain                | Fenced active-passive promotion, fail closed uncertain privacy                                         | Regional drill proposed                                                                           | No implemented multi-region replication                         |
+| Crash during ranking           | Incomplete session transaction                                | DB rollback; next request builds new session                                                           | Rollback semantics; process-kill drill proposed                                                   | Retries may repeat bounded work                                 |
+| Retry partially completed job  | Duplicate range inserts                                       | Atomic checkpoint + unique entry; SKIP LOCKED                                                          | Executed rollback/resume/duplicate job test                                                       | One job/post not range-parallel                                 |
+| Mixed schema versions          | Unknown payload fields/actions                                | Schema version check; explicit .DLT destination and failed-send propagation; expand-contract migration | Real DLT round trip and failed-send tests executed; rolling schema compatibility drill proposed   | Event-ID envelopes couple consumer to shared DB                 |
+| Deleted/blocked cached post    | Privacy leak through stale hydrated payload                   | No hydrated post cache; reauthorize every page and direct/media read                                   | Executed private HTTP,block,page,deletion tests                                                   | 30s media URLs explicitly weaker revocation                     |
+
+## Additional upload and publication boundaries
+
+- Publisher dies after claim: the durable 30s lease expires; a replacement token fences late checkpoints. Ten crashed
+  claims exhaust the budget and require operator requeue. Recovery/fencing/concurrent claims are tested; true OS
+  process-kill and mixed-version rollout drills remain proposed.
+- Broker acknowledgment succeeds but database checkpoint fails: the event may be sent again after expiry. Job uniqueness
+  and current-post truth prevent duplicate entries or resurrection. Do not claim exactly-once delivery.
+- DLT publication fails: recovery throws so the listener can retry; no successful recovery is reported. Failed-send
+  behavior and real DLT delivery are executed tests; a live broker outage during listener offset commit is still a
+  proposed drill.
+- Forged MIME metadata or image decompression bomb: completion validates image format, decode and 10MiB/20MP budgets
+  using the source ETag. Invalid uploads remain incomplete and cannot be downloaded or attached. Tests execute these
+  rejection paths. MP4 validation is only initial-box admission; malware scanning and complete container validation
+  remain required.
+- Oversized API JSON: both declared and chunked bodies return413 before deserialization, with a bounded buffer and no
+  profile mutation. Unit, MockMvc and actual HTTP chunked checks executed. Slow-client protection and aggregate resource
+  limits still require ingress policy.
+
+## Identity verification failures
+
+- Issuer/JWK outage: fresh cached known keys verify for up to5min; uncached/expired keys fail closed with503 and
+  Retry-After. Token expiry and current application visibility are still checked. Simulated cache/outage and actual HTTP
+  filter behavior are tested; external-provider availability drills remain unexecuted.
+- Unknown `kid` flood: two JWK refreshes per1s interval per instance, a64KiB response limit,2s transport/refresh-wait
+  bounds and no automatic retry prevent unbounded remote fetches. Refresh limits and oversized responses are tested; a
+  live attack/load benchmark remains unexecuted.
+- Rotated key: publishing overlapping keys with a new `kid` permits on-demand refresh; removal remains subject to5min
+  cache retention. Real signed-token/simulated JWK rotation is tested; live provider rotation and emergency cache
+  fencing remain operational drills.
+- Mixed development/production configuration: startup rejects development mode under the production profile,
+  insecure/missing JWK endpoints and a shared JWT_SECRET in OIDC mode. Configuration binding/startup tests execute these
+  paths. Provision the issuer's UUID/audience ownership policy before connecting an existing user database.
